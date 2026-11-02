@@ -1,0 +1,84 @@
+blueprint:
+  name: VTherm Knob link
+  description: >
+    Links an ONX2424G013 VTherm Knob to a Versatile Thermostat climate entity.
+    Sends the thermostat state to the knob and applies temperature / preset / mode
+    changes made on the knob.
+  domain: automation
+  input:
+    knob:
+      name: Knob device
+      selector:
+        device:
+          integration: esphome
+    climate_entity:
+      name: Versatile Thermostat
+      selector:
+        entity:
+          domain: climate
+
+mode: queued
+max: 20
+
+variables:
+  climate_entity: !input climate_entity
+  knob: !input knob
+  knob_action: >
+    {{ 'esphome.' ~ (device_attr(knob, 'name') | slugify) ~ '_set_state' }}
+
+trigger:
+  - platform: state
+    entity_id: !input climate_entity
+  - platform: state
+    entity_id: !input climate_entity
+    attribute: current_temperature
+  - platform: time_pattern
+    minutes: "/1"
+  - platform: homeassistant
+    event: start
+  - platform: event
+    event_type: esphome.vtherm_knob
+    id: knob
+
+action:
+  - if:
+      - condition: trigger
+        id: knob
+      - condition: template
+        value_template: "{{ trigger.event.data.device_id == knob }}"
+    then:
+      - choose:
+          - conditions: "{{ trigger.event.data.type == 'temperature' }}"
+            sequence:
+              - service: climate.set_temperature
+                target: { entity_id: "{{ climate_entity }}" }
+                data: { temperature: "{{ trigger.event.data.value | float }}" }
+          - conditions: "{{ trigger.event.data.type == 'preset' }}"
+            sequence:
+              - service: climate.set_preset_mode
+                target: { entity_id: "{{ climate_entity }}" }
+                data: { preset_mode: "{{ trigger.event.data.value }}" }
+          - conditions: "{{ trigger.event.data.type == 'hvac_mode' }}"
+            sequence:
+              - service: climate.set_hvac_mode
+                target: { entity_id: "{{ climate_entity }}" }
+                data: { hvac_mode: "{{ trigger.event.data.value }}" }
+      - delay: 1
+  - variables:
+      a: "{{ states[climate_entity].attributes if states[climate_entity] else {} }}"
+      on: "{{ ['on', 'true', 'detected', True] }}"
+  - service: "{{ knob_action }}"
+    continue_on_error: true
+    data:
+      current: "{{ a.current_temperature | float(0) }}"
+      target: "{{ a.temperature | float(20) }}"
+      ext: "{{ a.ext_current_temperature | float(-99) }}"
+      power: "{{ (a.on_percent if a.on_percent is defined else a.power_percent | default(0)) | float(0) }}"
+      mode: "{{ states(climate_entity) }}"
+      hvac_action: "{{ a.hvac_action | default('') }}"
+      preset: "{{ a.preset_mode | default('none') }}"
+      window: "{{ a.window_state | default('off') in on }}"
+      motion: "{{ a.motion_state | default('off') in on }}"
+      away: "{{ a.presence_state | default('on') in ['off', 'false', False] }}"
+      overpower: "{{ a.overpowering_state | default('off') in on }}"
+      safety: "{{ a.safety_state | default('off') in on }}"
